@@ -21,10 +21,24 @@ export default function Home() {
   const [emojis, setEmojis] = useState<Emoji[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [credits, setCredits] = useState<number | null>(null);
 
   useEffect(() => {
     fetchEmojis();
+    fetchUserCredits();
   }, []);
+
+  const fetchUserCredits = async () => {
+    try {
+      const response = await fetch('/api/profile');
+      if (response.ok) {
+        const data = await response.json();
+        setCredits(data.credits);
+      }
+    } catch (err) {
+      console.error('Error fetching user credits:', err);
+    }
+  };
 
   const fetchEmojis = async () => {
     try {
@@ -57,7 +71,13 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to generate emoji');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to generate emoji');
+      }
+
+      const result = await response.json();
+      if (result.remainingCredits !== undefined) {
+        setCredits(result.remainingCredits);
       }
 
       await fetchEmojis();
@@ -115,7 +135,13 @@ export default function Home() {
               Emoji Maker
             </span>
           </h1>
-          <p className="text-lg md:text-xl text-gray-600">Create custom emojis with AI</p>
+          <p className="text-lg md:text-xl text-gray-600 mb-4">Create custom emojis with AI</p>
+          {credits !== null && (
+            <div className="inline-flex items-center px-4 py-2 rounded-full bg-indigo-100 text-indigo-800 text-sm font-medium">
+              <Sparkles className="h-4 w-4 mr-2" />
+              {credits} {credits === 1 ? 'Credit' : 'Credits'} Remaining
+            </div>
+          )}
         </div>
 
         <Card className="max-w-2xl mx-auto mb-12 shadow-lg">
@@ -146,7 +172,7 @@ export default function Home() {
               </div>
               <Button
                 type="submit"
-                disabled={isGenerating || !prompt.trim()}
+                disabled={isGenerating || !prompt.trim() || credits === 0}
                 className="w-full"
               >
                 {isGenerating ? (

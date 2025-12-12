@@ -25,9 +25,30 @@ async function waitForPrediction(predictionId: string) {
     return prediction;
 }
 
+async function checkAndDecrementCredits(userId: string, supabase: any) {
+    const { data, error: fetchError } = await supabase.rpc('decrement_user_credits', {
+        p_user_id: userId  // FIXED: Changed from user_id to p_user_id
+    });
+
+    if (fetchError) {
+        console.error('Error managing credits:', fetchError);
+        throw new Error(fetchError.message);
+    }
+
+    if (!data || data.length === 0) {
+        throw new Error('User not found');
+    }
+
+    const result = data[0];
+    if (result.credits_before <= 0) {
+        throw new Error('Insufficient credits');
+    }
+
+    return result.credits_after;
+}
+
 export async function POST(request: NextRequest) {
     try {
-        // Get user ID from Clerk
         const { userId } = getAuth(request);
         if (!userId) {
             return NextResponse.json(
@@ -38,6 +59,16 @@ export async function POST(request: NextRequest) {
 
         const { prompt } = await request.json();
         console.log('Generating emoji with prompt:', prompt);
+
+        // Check and decrement credits
+        try {
+            await checkAndDecrementCredits(userId, supabase);
+        } catch (error) {
+            return NextResponse.json(
+                { error: error instanceof Error ? error.message : 'Insufficient credits' },
+                { status: 400 }
+            );
+        }
 
         const prediction = await replicate.predictions.create({
             version: "dee76b5afde21b0f01ed7925f0665b7e879c50ee718c5f78a9d38e04d523cc5e",
@@ -70,7 +101,6 @@ export async function POST(request: NextRequest) {
             throw new Error('Invalid image URL from Replicate API');
         }
 
-        // 1. Fetch the image data
         const imageResponse = await fetch(imageUrl);
         if (!imageResponse.ok) {
             throw new Error(`Failed to fetch image from Replicate: ${imageResponse.statusText}`);
@@ -79,7 +109,6 @@ export async function POST(request: NextRequest) {
         const imageArrayBuffer = await imageBlob.arrayBuffer();
         const imageBuffer = Buffer.from(imageArrayBuffer);
 
-        // 2. Upload to Supabase Storage
         const fileName = `${uuidv4()}.png`;
         const { data: uploadData, error: uploadError } = await supabase.storage
             .from('emojis')
@@ -93,12 +122,10 @@ export async function POST(request: NextRequest) {
             throw new Error(`Failed to upload image to storage: ${uploadError.message}`);
         }
 
-        // 3. Get public URL
         const { data: { publicUrl } } = supabase.storage
             .from('emojis')
             .getPublicUrl(fileName);
 
-        // 4. Save to database
         const { data, error } = await supabase
             .from('emojis')
             .insert({
@@ -113,7 +140,10 @@ export async function POST(request: NextRequest) {
 
         if (error) throw error;
 
-        return NextResponse.json(data);
+        return NextResponse.json({
+            ...data,
+            remainingCredits: await getRemainingCredits(userId, supabase)
+        });
     } catch (error) {
         console.error('Error generating emoji:', error);
         return NextResponse.json(
@@ -121,9 +151,24 @@ export async function POST(request: NextRequest) {
                 error: 'Failed to generate emoji',
                 details: error instanceof Error ? error.message : 'Unknown error'
             },
-            { status: 500 }
+            { status: error instanceof Error && error.message === 'Insufficient credits' ? 400 : 500 }
         );
     }
+}
+
+async function getRemainingCredits(userId: string, supabase: any): Promise<number> {
+    const { data, error } = await supabase
+        .from('profiles')
+        .select('credits')
+        .eq('user_id', userId)  // FIXED: Changed from id to user_id
+        .single();
+
+    if (error || !data) {
+        console.error('Error fetching remaining credits:', error);
+        return 0;
+    }
+
+    return data.credits;
 }
 
 export const dynamic = 'force-dynamic';
