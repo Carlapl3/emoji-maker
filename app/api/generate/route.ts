@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import Replicate from 'replicate';
 import { createClient } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
+import { getAuth } from '@clerk/nextjs/server';
 
 const replicate = new Replicate({
     auth: process.env.REPLICATE_API_TOKEN,
@@ -24,8 +25,17 @@ async function waitForPrediction(predictionId: string) {
     return prediction;
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
     try {
+        // Get user ID from Clerk
+        const { userId } = getAuth(request);
+        if (!userId) {
+            return NextResponse.json(
+                { error: 'Unauthorized' },
+                { status: 401 }
+            );
+        }
+
         const { prompt } = await request.json();
         console.log('Generating emoji with prompt:', prompt);
 
@@ -95,7 +105,8 @@ export async function POST(request: Request) {
                 image_url: publicUrl,
                 prompt: prompt,
                 likes: 0,
-                storage_path: uploadData.path
+                storage_path: uploadData.path,
+                creator_user_id: userId
             })
             .select()
             .single();
