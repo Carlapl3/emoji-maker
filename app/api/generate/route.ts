@@ -1,24 +1,25 @@
 import { NextResponse } from 'next/server';
 import Replicate from 'replicate';
+import { createClient } from '@supabase/supabase-js';
 
 const replicate = new Replicate({
     auth: process.env.REPLICATE_API_TOKEN,
 });
 
-// Helper function to wait for prediction to complete
+const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
+
 async function waitForPrediction(predictionId: string) {
     let prediction = await replicate.predictions.get(predictionId);
-
     while (prediction.status !== 'succeeded' && prediction.status !== 'failed') {
-        // Wait for 1 second before checking again
         await new Promise(resolve => setTimeout(resolve, 1000));
         prediction = await replicate.predictions.get(predictionId);
     }
-
     if (prediction.status === 'failed') {
         throw new Error(`Prediction failed: ${prediction.error}`);
     }
-
     return prediction;
 }
 
@@ -27,7 +28,6 @@ export async function POST(request: Request) {
         const { prompt } = await request.json();
         console.log('Generating emoji with prompt:', prompt);
 
-        // First, create the prediction
         const prediction = await replicate.predictions.create({
             version: "dee76b5afde21b0f01ed7925f0665b7e879c50ee718c5f78a9d38e04d523cc5e",
             input: {
@@ -47,14 +47,9 @@ export async function POST(request: Request) {
             },
         });
 
-        console.log('Prediction created:', prediction.id);
-
-        // Wait for the prediction to complete
         const completedPrediction = await waitForPrediction(prediction.id);
-        console.log('Prediction completed:', completedPrediction);
-
-        // Get the output URL
         const output = completedPrediction.output;
+
         if (!output || !Array.isArray(output) || output.length === 0) {
             throw new Error('No output from Replicate API');
         }
@@ -64,18 +59,20 @@ export async function POST(request: Request) {
             throw new Error('Invalid image URL from Replicate API');
         }
 
-        // In a real app, you would save this to a database
-        const emoji = {
-            id: prediction.id,
-            url: imageUrl,
-            prompt,
-            likes: 0,
-            createdAt: new Date().toISOString(),
-        };
+        // Save to Supabase
+        const { data, error } = await supabase
+            .from('emojis')
+            .insert({
+                image_url: imageUrl,
+                prompt: prompt,
+                likes: 0
+            })
+            .select()
+            .single();
 
-        console.log('Generated emoji:', emoji);
+        if (error) throw error;
 
-        return NextResponse.json(emoji);
+        return NextResponse.json(data);
     } catch (error) {
         console.error('Error generating emoji:', error);
         return NextResponse.json(
@@ -89,3 +86,4 @@ export async function POST(request: Request) {
 }
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
