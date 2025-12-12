@@ -17,8 +17,8 @@ export async function POST(req: Request) {
         // Check if profile already exists
         const { data: existingProfile } = await supabaseAdmin
             .from('profiles')
-            .select('id')
-            .eq('id', userId)
+            .select('user_id')
+            .eq('user_id', userId)
             .single();
 
         if (existingProfile) {
@@ -33,7 +33,9 @@ export async function POST(req: Request) {
             .from('profiles')
             .insert([
                 {
-                    id: userId,
+                    user_id: userId,
+                    credits: 3,
+                    tier: 'free',
                     created_at: new Date().toISOString(),
                     updated_at: new Date().toISOString()
                 }
@@ -51,7 +53,6 @@ export async function POST(req: Request) {
             { message: "Profile initialized successfully" },
             { status: 201 }
         );
-
     } catch (error) {
         console.error('Error in profile initialization:', error);
         return NextResponse.json(
