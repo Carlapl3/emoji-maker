@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import Replicate from 'replicate';
 import { createClient } from '@supabase/supabase-js';
+import { v4 as uuidv4 } from 'uuid';
 
 const replicate = new Replicate({
     auth: process.env.REPLICATE_API_TOKEN,
@@ -59,13 +60,42 @@ export async function POST(request: Request) {
             throw new Error('Invalid image URL from Replicate API');
         }
 
-        // Save to Supabase
+        // 1. Fetch the image data
+        const imageResponse = await fetch(imageUrl);
+        if (!imageResponse.ok) {
+            throw new Error(`Failed to fetch image from Replicate: ${imageResponse.statusText}`);
+        }
+        const imageBlob = await imageResponse.blob();
+        const imageArrayBuffer = await imageBlob.arrayBuffer();
+        const imageBuffer = Buffer.from(imageArrayBuffer);
+
+        // 2. Upload to Supabase Storage
+        const fileName = `${uuidv4()}.png`;
+        const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('emojis')
+            .upload(fileName, imageBuffer, {
+                contentType: 'image/png',
+                upsert: false
+            });
+
+        if (uploadError) {
+            console.error('Error uploading to Supabase Storage:', uploadError);
+            throw new Error(`Failed to upload image to storage: ${uploadError.message}`);
+        }
+
+        // 3. Get public URL
+        const { data: { publicUrl } } = supabase.storage
+            .from('emojis')
+            .getPublicUrl(fileName);
+
+        // 4. Save to database
         const { data, error } = await supabase
             .from('emojis')
             .insert({
-                image_url: imageUrl,
+                image_url: publicUrl,
                 prompt: prompt,
-                likes: 0
+                likes: 0,
+                storage_path: uploadData.path
             })
             .select()
             .single();
